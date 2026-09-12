@@ -12,8 +12,14 @@
         button:hover { background: #45a049; }
         .friend-card { background: #2a2a2a; padding: 15px; border-radius: 8px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; transition: 0.3s; }
         .friend-info { font-size: 14px; color: #aaa; word-break: break-all; }
+        .friend-actions { display: flex; gap: 8px; align-items: center; }
         .friend-status { padding: 8px 14px; border-radius: 6px; font-weight: bold; font-size: 14px; background: #555; }
-        .delete-btn { background: #f44336; padding: 6px 12px; font-size: 12px; margin-left: 10px; }
+        .action-btn { padding: 6px 12px; font-size: 12px; }
+        .pause-btn { background: #FF9800; }
+        .pause-btn:hover { background: #F57C00; }
+        .resume-btn { background: #2196F3; }
+        .resume-btn:hover { background: #1976D2; }
+        .delete-btn { background: #f44336; }
         .delete-btn:hover { background: #d32f2f; }
         #audio-status { text-align: center; margin-bottom: 20px; font-size: 14px; color: #aaa; }
         #auth-screen { text-align: center; margin-top: 50px; }
@@ -48,7 +54,6 @@
                 <button id="save-auth-btn" style="background: #2196F3;">保存</button>
             </div>
             
-            <!-- いつでも見られる手順ガイド -->
             <div class="step-guide">
                 <strong>📝 authクッキーの取得手順:</strong><br>
                 1. <a href="https://vrchat.com/home" target="_blank" style="color: #64B5F6;">VRChat公式サイト</a>にログインする。<br>
@@ -87,7 +92,6 @@
             document.getElementById('auth-cookie-input').value = vrcAuthToken;
         }
 
-        // 保存ボタンの処理
         document.getElementById('save-auth-btn').addEventListener('click', () => {
             const token = document.getElementById('auth-cookie-input').value.trim();
             if (token) {
@@ -102,7 +106,6 @@
             }
         });
 
-        // パスワード認証
         document.getElementById('login-btn').addEventListener('click', tryLogin);
         document.getElementById('pass-input').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') tryLogin();
@@ -146,6 +149,10 @@
             }
 
             friends.push(id);
+            // 初期状態は一時停止OFF（監視中）
+            if (!lastStates[id]) lastStates[id] = {};
+            lastStates[id].paused = false;
+
             saveAndRender();
             input.value = '';
             checkSingleFriend(id);
@@ -156,6 +163,14 @@
             delete lastStates[id];
             currentIndex = 0;
             saveAndRender();
+        }
+
+        // 一時停止／再開を切り替える関数
+        window.togglePause = function(id) {
+            if (lastStates[id]) {
+                lastStates[id].paused = !lastStates[id].paused;
+                saveAndRender();
+            }
         }
 
         function saveAndRender() {
@@ -173,14 +188,21 @@
 
             listContainer.innerHTML = '';
             friends.forEach(id => {
-                const state = lastStates[id] || { status: '未確認', bg: '#555' };
+                const state = lastStates[id] || { status: '未確認', bg: '#555', paused: false };
+                const isPaused = state.paused;
+                
                 const card = document.createElement('div');
                 card.className = 'friend-card';
                 card.innerHTML = `
                     <div class="friend-info">${id}</div>
-                    <div>
-                        <span class="friend-status" style="background-color: ${state.bg};">${state.text}</span>
-                        <button class="delete-btn" onclick="removeFriend('${id}')">削除</button>
+                    <div class="friend-actions">
+                        <span class="friend-status" style="background-color: ${isPaused ? '#777' : state.bg};">
+                            ${isPaused ? '一時停止中' : state.text}
+                        </span>
+                        <button class="action-btn ${isPaused ? 'resume-btn' : 'pause-btn'}" onclick="togglePause('${id}')">
+                            ${isPaused ? '再開' : '一時停止'}
+                        </button>
+                        <button class="action-btn delete-btn" onclick="removeFriend('${id}')">削除</button>
                     </div>
                 `;
                 listContainer.appendChild(card);
@@ -188,8 +210,11 @@
         }
 
         async function checkSingleFriend(id) {
+            // もし一時停止中ならAPIを叩かない
+            if (lastStates[id] && lastStates[id].paused) return;
+
             if (!vrcAuthToken) {
-                lastStates[id] = { raw: "error", text: "authトークン未設定", bg: "#f44336" };
+                lastStates[id] = { ...lastStates[id], raw: "error", text: "authトークン未設定", bg: "#f44336" };
                 saveAndRender();
                 return;
             }
@@ -220,13 +245,17 @@
                     bgColor = "#555";
                 }
 
+                // オフラインからオンラインに変わった瞬間
                 if (currentState !== "offline" && oldState === "offline") {
                     if (audioUnlocked) {
                         document.getElementById('alert-sound').play().catch(e => console.log(e));
                     }
+                    // オンラインになったら自動で一時停止状態にする場合：
+                    // lastStates[id].paused = true; （もし自動で止めたい場合はここを有効にできますが、今回は手動ボタンを置いたのでそのまま）
                 }
 
                 lastStates[id] = {
+                    ...lastStates[id],
                     raw: currentState,
                     text: statusText,
                     bg: bgColor
@@ -235,8 +264,9 @@
             } catch (error) {
                 console.error(`${id} の取得失敗:`, error);
                 lastStates[id] = {
+                    ...lastStates[id],
                     raw: "error",
-                    text: "取得エラー (要トークン確認)",
+                    text: "取得エラー",
                     bg: "#f44336"
                 };
             }
