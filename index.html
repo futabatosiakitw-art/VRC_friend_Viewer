@@ -20,6 +20,7 @@
         .hidden { display: none !important; }
         #next-check-info { text-align: center; margin-bottom: 15px; font-size: 13px; color: #888; }
         .settings-box { background: #222; padding: 15px; border-radius: 8px; margin-bottom: 20px; font-size: 14px; }
+        .step-guide { font-size: 12px; color: #aaa; background: #2a2a2a; padding: 10px; border-radius: 6px; margin-top: 8px; line-height: 1.5; }
     </style>
 </head>
 <body>
@@ -39,15 +40,22 @@
         <h1>VRC Friend Monitor</h1>
         <div id="audio-status">🔊 音声有効化のため、ページ内のどこかをクリックしてください</div>
         
-        <!-- 認証管理エリア -->
+        <!-- 認証管理＆手順エリア -->
         <div class="settings-box">
-            <p style="margin-top:0;">VRChatログイン認証:</p>
-            <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-                <a href="https://vrchat.com/home" target="_blank" style="color: #64B5F6; font-size: 13px;">1. まずVRChat公式にログインする (別タブ)</a>
+            <p style="margin-top:0; font-weight: bold;">VRChatログイン認証設定:</p>
+            <div class="input-group" style="margin-bottom: 5px;">
+                <input type="text" id="auth-cookie-input" placeholder="authクッキーの値をペースト">
+                <button id="save-auth-btn" style="background: #2196F3;">保存</button>
             </div>
-            <div class="input-group" style="margin-top: 10px; margin-bottom: 0;">
-                <input type="text" id="auth-cookie-input" placeholder="authクッキーの値をペースト、または下の自動取得ボタン">
-                <button id="auto-get-btn" style="background: #FF9800;" title="同一ブラウザ内の別タブ（vrchat.com）からCookieを自動取得を試みます">自動取得</button>
+            
+            <!-- いつでも見られる手順ガイド -->
+            <div class="step-guide">
+                <strong>📝 authクッキーの取得手順:</strong><br>
+                1. <a href="https://vrchat.com/home" target="_blank" style="color: #64B5F6;">VRChat公式サイト</a>にログインする。<br>
+                2. ページ上で <strong>F12キー</strong> を押して開発者ツールを開く。<br>
+                3. 「Application（アプリケーション）」または「ストレージ」タブを開く。<br>
+                4. 左側メニューの「Cookies」＞ <code>https://vrchat.com</code> を選ぶ。<br>
+                5. 一覧から <strong>auth</strong> を探し、その値（authcookie_...）をコピーして上の入力欄に貼り付けて「保存」を押す。
             </div>
         </div>
 
@@ -79,33 +87,19 @@
             document.getElementById('auth-cookie-input').value = vrcAuthToken;
         }
 
-        // 自動取得（iframeを用いたクロスドメインCookieハック）を試みるボタン
-        document.getElementById('auto-get-btn').addEventListener('click', () => {
-            const btn = document.getElementById('auto-get-btn');
-            btn.innerText = "取得中...";
-            
-            // 隠しiframeでvrchat.comのauthクッキーにアクセスを試みる
-            const iframe = document.createElement('iframe');
-            iframe.style.display = 'none';
-            iframe.src = 'https://vrchat.com/api/1/auth/user';
-            
-            window.addEventListener('message', function handler(event) {
-                if (event.origin === 'https://vrchat.com') {
-                    // もし取得できたら
+        // 保存ボタンの処理
+        document.getElementById('save-auth-btn').addEventListener('click', () => {
+            const token = document.getElementById('auth-cookie-input').value.trim();
+            if (token) {
+                localStorage.setItem('vrc_auth_token', token);
+                vrcAuthToken = token;
+                alert("authトークンを保存しました！");
+                if (friends.length > 0) {
+                    checkSingleFriend(friends[currentIndex]);
                 }
-            });
-
-            // ブラウザのセキュリティ制約によりiframe経由でも直接Cookieの文字列を読み出すことはできないため、
-            // 確実で一番ラクな「開発者ツールを使わずに、Cookieの値をブックマークレット等で一発ポンッと入れる」か、
-            // もしくは一度だけコピーしてもらうのが一番安全です。
-            
-            // 代替案として、もし手動コピペが面倒な場合、ブラウザのコンソールを開かなくても一発でCookieを出す小技があります。
-            setTimeout(() => {
-                iframe.remove();
-                btn.innerText = "自動取得";
-                alert("ブラウザのセキュリティ制限により、別ドメインから直接Cookieを読み取ることはできません。\n\nお手数ですが、一度だけF12等でコピーしたauthの値を貼り付けて保存してください！");
-            }, 1000);
-            document.body.appendChild(iframe);
+            } else {
+                alert("値が空です");
+            }
         });
 
         // パスワード認証
@@ -115,7 +109,7 @@
         });
 
         function tryLogin() {
-            const val = document.getElementById('pass-input-input') || document.getElementById('pass-input').value;
+            const val = document.getElementById('pass-input').value;
             if (val === APP_PASSWORD) {
                 document.getElementById('auth-screen').classList.add('hidden');
                 document.getElementById('main-screen').classList.remove('hidden');
@@ -165,13 +159,6 @@
         }
 
         function saveAndRender() {
-            // 入力欄の値もついでに自動保存するようにする
-            const tokenInput = document.getElementById('auth-cookie-input').value.trim();
-            if (tokenInput) {
-                localStorage.setItem('vrc_auth_token', tokenInput);
-                vrcAuthToken = tokenInput;
-            }
-
             localStorage.setItem('vrc_friends', JSON.stringify(friends));
             localStorage.setItem('vrc_last_states', JSON.stringify(lastStates));
             renderList();
@@ -201,13 +188,6 @@
         }
 
         async function checkSingleFriend(id) {
-            // チェック時にも自動で入力欄からトークンを拾う
-            const tokenInput = document.getElementById('auth-cookie-input').value.trim();
-            if (tokenInput) {
-                vrcAuthToken = tokenInput;
-                localStorage.setItem('vrc_auth_token', tokenInput);
-            }
-
             if (!vrcAuthToken) {
                 lastStates[id] = { raw: "error", text: "authトークン未設定", bg: "#f44336" };
                 saveAndRender();
@@ -233,7 +213,6 @@
                 let bgColor = "#555";
 
                 if (currentState !== "offline") {
-                    status_text = `オンライン (${currentState})`;
                     statusText = `オンライン (${currentState})`;
                     bgColor = (currentState === "active") ? "#4CAF50" : "#2196F3";
                 } else {
@@ -243,7 +222,7 @@
 
                 if (currentState !== "offline" && oldState === "offline") {
                     if (audioUnlocked) {
-                        document.getElementById('alert-sys') || document.getElementById('alert-sound').play().catch(e => console.log(e));
+                        document.getElementById('alert-sound').play().catch(e => console.log(e));
                     }
                 }
 
