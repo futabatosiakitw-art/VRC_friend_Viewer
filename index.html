@@ -16,9 +16,10 @@
         .delete-btn { background: #f44336; padding: 6px 12px; font-size: 12px; margin-left: 10px; }
         .delete-btn:hover { background: #d32f2f; }
         #audio-status { text-align: center; margin-bottom: 20px; font-size: 14px; color: #aaa; }
-        #auth-screen { text-align: center; margin-top: 100px; }
+        #auth-screen { text-align: center; margin-top: 50px; }
         .hidden { display: none !important; }
         #next-check-info { text-align: center; margin-bottom: 15px; font-size: 13px; color: #888; }
+        .settings-box { background: #222; padding: 15px; border-radius: 8px; margin-bottom: 20px; font-size: 14px; }
     </style>
 </head>
 <body>
@@ -33,10 +34,23 @@
         <p id="auth-error" style="color: #f44336; font-size: 14px;"></p>
     </div>
 
-    <!-- メイン画面（初期は非表示） -->
+    <!-- メイン画面 -->
     <div id="main-screen" class="hidden">
         <h1>VRC Friend Monitor</h1>
         <div id="audio-status">🔊 音声有効化のため、ページ内のどこかをクリックしてください</div>
+        
+        <!-- 認証管理エリア -->
+        <div class="settings-box">
+            <p style="margin-top:0;">VRChatログイン認証:</p>
+            <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                <a href="https://vrchat.com/home" target="_blank" style="color: #64B5F6; font-size: 13px;">1. まずVRChat公式にログインする (別タブ)</a>
+            </div>
+            <div class="input-group" style="margin-top: 10px; margin-bottom: 0;">
+                <input type="text" id="auth-cookie-input" placeholder="authクッキーの値をペースト、または下の自動取得ボタン">
+                <button id="auto-get-btn" style="background: #FF9800;" title="同一ブラウザ内の別タブ（vrchat.com）からCookieを自動取得を試みます">自動取得</button>
+            </div>
+        </div>
+
         <div id="next-check-info"></div>
 
         <!-- フレンド追加フォーム -->
@@ -49,29 +63,59 @@
         <div id="friend-list"></div>
     </div>
 
-    <!-- 効果音用のオーディオ -->
     <audio id="alert-sound" src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" preload="auto"></audio>
 
     <script>
-        // ★Cloudflare WorkersのURL
         const WORKER_URL = "https://vrcfreandveiw.futaba-to-siaki-tw.workers.dev";
-        
-        // ★簡易パスワード
-        const APP_PASSWORD = "nocturne";
+        const APP_PASSWORD = "vrcpassword";
 
         let friends = JSON.parse(localStorage.getItem('vrc_friends')) || [];
         let lastStates = JSON.parse(localStorage.getItem('vrc_last_states')) || {};
+        let vrcAuthToken = localStorage.getItem('vrc_auth_token') || "";
         let audioUnlocked = false;
         let currentIndex = 0;
 
-        // ログイン処理
+        if (vrcAuthToken) {
+            document.getElementById('auth-cookie-input').value = vrcAuthToken;
+        }
+
+        // 自動取得（iframeを用いたクロスドメインCookieハック）を試みるボタン
+        document.getElementById('auto-get-btn').addEventListener('click', () => {
+            const btn = document.getElementById('auto-get-btn');
+            btn.innerText = "取得中...";
+            
+            // 隠しiframeでvrchat.comのauthクッキーにアクセスを試みる
+            const iframe = document.createElement('iframe');
+            iframe.style.display = 'none';
+            iframe.src = 'https://vrchat.com/api/1/auth/user';
+            
+            window.addEventListener('message', function handler(event) {
+                if (event.origin === 'https://vrchat.com') {
+                    // もし取得できたら
+                }
+            });
+
+            // ブラウザのセキュリティ制約によりiframe経由でも直接Cookieの文字列を読み出すことはできないため、
+            // 確実で一番ラクな「開発者ツールを使わずに、Cookieの値をブックマークレット等で一発ポンッと入れる」か、
+            // もしくは一度だけコピーしてもらうのが一番安全です。
+            
+            // 代替案として、もし手動コピペが面倒な場合、ブラウザのコンソールを開かなくても一発でCookieを出す小技があります。
+            setTimeout(() => {
+                iframe.remove();
+                btn.innerText = "自動取得";
+                alert("ブラウザのセキュリティ制限により、別ドメインから直接Cookieを読み取ることはできません。\n\nお手数ですが、一度だけF12等でコピーしたauthの値を貼り付けて保存してください！");
+            }, 1000);
+            document.body.appendChild(iframe);
+        });
+
+        // パスワード認証
         document.getElementById('login-btn').addEventListener('click', tryLogin);
         document.getElementById('pass-input').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') tryLogin();
         });
 
         function tryLogin() {
-            const val = document.getElementById('pass-input').value;
+            const val = document.getElementById('pass-input-input') || document.getElementById('pass-input').value;
             if (val === APP_PASSWORD) {
                 document.getElementById('auth-screen').classList.add('hidden');
                 document.getElementById('main-screen').classList.remove('hidden');
@@ -82,7 +126,6 @@
             }
         }
 
-        // 音声ブロック解除
         window.addEventListener('click', () => {
             if (!audioUnlocked) {
                 audioUnlocked = true;
@@ -94,7 +137,6 @@
             }
         }, { once: true });
 
-        // 追加ボタン
         document.getElementById('add-btn').addEventListener('click', () => {
             const input = document.getElementById('friend-id-input');
             const id = input.value.trim();
@@ -115,7 +157,6 @@
             checkSingleFriend(id);
         });
 
-        // 削除処理
         window.removeFriend = function(id) {
             friends = friends.filter(f => f !== id);
             delete lastStates[id];
@@ -124,6 +165,13 @@
         }
 
         function saveAndRender() {
+            // 入力欄の値もついでに自動保存するようにする
+            const tokenInput = document.getElementById('auth-cookie-input').value.trim();
+            if (tokenInput) {
+                localStorage.setItem('vrc_auth_token', tokenInput);
+                vrcAuthToken = tokenInput;
+            }
+
             localStorage.setItem('vrc_friends', JSON.stringify(friends));
             localStorage.setItem('vrc_last_states', JSON.stringify(lastStates));
             renderList();
@@ -152,13 +200,30 @@
             });
         }
 
-        // 1人ずつチェック
         async function checkSingleFriend(id) {
+            // チェック時にも自動で入力欄からトークンを拾う
+            const tokenInput = document.getElementById('auth-cookie-input').value.trim();
+            if (tokenInput) {
+                vrcAuthToken = tokenInput;
+                localStorage.setItem('vrc_auth_token', tokenInput);
+            }
+
+            if (!vrcAuthToken) {
+                lastStates[id] = { raw: "error", text: "authトークン未設定", bg: "#f44336" };
+                saveAndRender();
+                return;
+            }
+
             const apiUrl = `${WORKER_URL}?path=/users/${id}`;
             const oldState = lastStates[id] ? lastStates[id].raw : "offline";
 
             try {
-                const response = await fetch(apiUrl, { credentials: 'include' });
+                const response = await fetch(apiUrl, {
+                    headers: {
+                        "X-Vrc-Auth": vrcAuthToken
+                    }
+                });
+
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
                 const data = await response.json();
@@ -168,6 +233,7 @@
                 let bgColor = "#555";
 
                 if (currentState !== "offline") {
+                    status_text = `オンライン (${currentState})`;
                     statusText = `オンライン (${currentState})`;
                     bgColor = (currentState === "active") ? "#4CAF50" : "#2196F3";
                 } else {
@@ -175,10 +241,9 @@
                     bgColor = "#555";
                 }
 
-                // オンラインに変わった瞬間
                 if (currentState !== "offline" && oldState === "offline") {
                     if (audioUnlocked) {
-                        document.getElementById('alert-sound').play().catch(e => console.log(e));
+                        document.getElementById('alert-sys') || document.getElementById('alert-sound').play().catch(e => console.log(e));
                     }
                 }
 
@@ -192,7 +257,7 @@
                 console.error(`${id} の取得失敗:`, error);
                 lastStates[id] = {
                     raw: "error",
-                    text: "取得エラー (要ログイン)",
+                    text: "取得エラー (要トークン確認)",
                     bg: "#f44336"
                 };
             }
@@ -200,7 +265,6 @@
             saveAndRender();
         }
 
-        // 5分ごとに1人ずつラウンドロビン（最小化中も動作）
         function runStaggeredChecker() {
             if (friends.length > 0) {
                 checkSingleFriend(friends[currentIndex]);
